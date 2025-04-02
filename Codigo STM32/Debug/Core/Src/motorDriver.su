@@ -1,0 +1,2 @@
+../Core/Src/motorDriver.c:13:6:motoresInit	24	static
+../Core/Src/motorDriver.c:26:6:motores	16	static
