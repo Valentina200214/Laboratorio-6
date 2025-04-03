@@ -107,15 +107,38 @@ volatile uint8_t datosRX [15];
 
 //6 lab
 
+float distancias_mm[] = {20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
+                         105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165,
+                         170, 175, 180, 185, 190, 195, 200, 205, 210, 215, 220};
+int num_puntos = 41;
+
+uint16_t adc_sensor1[] = {2580, 2279, 1972, 1606, 1372, 1160, 998, 838, 684, 582, 506, 435,
+        				  373, 335, 333, 303, 277, 253, 228, 209, 193, 180, 167, 161, 155,
+						  147, 140, 136, 132, 130, 128, 124, 127, 124, 122, 122, 119, 118, 118, 118, 117};
+uint16_t adc_sensor2[] = {925, 849, 752, 650, 589, 517, 479, 424, 367, 333, 306, 264,
+                          250, 224, 223, 205, 189, 183, 174, 161, 150, 143, 134, 130,
+                          127, 122, 116, 116, 114, 113, 115, 120, 118, 121, 121, 119, 120,
+                          119, 119, 119, 120};
+uint16_t adc_sensor3[] = {1071, 891, 727, 557, 464, 377, 324, 274, 242, 213, 197, 173,
+                          173, 166, 166, 158, 148, 144, 140, 130, 129, 124, 121, 121,
+                          123, 124, 127, 124, 124, 122, 119, 118, 120, 117, 119, 122, 120,
+                          119, 119, 119, 119};
+uint16_t adc_sensor4[] = {3497, 3025, 2412, 1873, 1583, 1313, 1119, 969, 809, 717, 643, 575,
+                          527, 492, 4491, 467, 446, 427, 411, 392, 380, 374, 360, 356,
+                          350, 340, 339, 334, 331, 329, 326, 324, 326, 326, 323, 321, 319,
+                          319, 318, 316, 316};
+
 uint16_t adcValue[5] = {0,0,0,0,0};
 uint16_t adcMM[5] = {0,0,0,0,0};
 float adcVoltaje[5] = {0,0,0,0,0};
 char texto[64];
 
-#define VOLTAGE_AVG_LENGTH 10
-float voltage_buffer[5][VOLTAGE_AVG_LENGTH];
-int voltage_buffer_index = 0;
-float voltage_avg[5] = {0, 0, 0, 0, 0};
+#define ADC_BUFFER_SIZE 10
+uint16_t adc_buffer[5][ADC_BUFFER_SIZE] = {0};
+uint8_t adc_buffer_index = 0;
+
+float adc_avg[5] = {0,0,0,0,0};
+uint8_t muestras = 0;
 
 
 
@@ -389,6 +412,28 @@ int16_t aplicarFiltroFIR(int16_t rpm_actual){
 	return filtered_rpm;
 }
 
+void promedio_adc(void) {
+    for(int i = 0; i < 5; i++) {
+        adc_buffer[i][adc_buffer_index] = adcValue[i];
+    }
+
+    adc_buffer_index++;
+    muestras++;
+
+    if(muestras >= ADC_BUFFER_SIZE) {
+        for(int i = 0; i < 5; i++) {
+            uint32_t sum = 0;
+            for(int j = 0; j < ADC_BUFFER_SIZE; j++) {
+                sum += adc_buffer[i][j];
+            }
+            adc_avg[i] = (float)sum / ADC_BUFFER_SIZE;
+            adcVoltaje[i] = (adc_avg[i] * 3.3) / 4095.0;
+        }
+
+        adc_buffer_index = 0;
+        muestras = 0;
+    }
+}
 
 int abc;
 void calibracion(){
@@ -401,6 +446,7 @@ void calibracion(){
 		while ((abc=__HAL_TIM_GET_COUNTER(&htim4)) >= 2) {
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, 0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, 1);
+
 
 			while ((abc=__HAL_TIM_GET_COUNTER(&htim4)) >= 4) {
 				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, 0);
@@ -437,28 +483,36 @@ void calibracion(){
 
 }
 
-void calculo_adc() {
-
-    for (int i = 0; i < 5; i++) {
-        adcVoltaje[i] = (adcValue[i] * 3.3) / 4095.0;
-
+float interpolar_distancia(uint16_t adc_recibido, uint16_t *adc_tabla, float *distancias, int num_puntos) {
+    if (adc_recibido >= adc_tabla[0]) {
+        return distancias[0];
     }
+    if (adc_recibido <= adc_tabla[num_puntos - 1]) {
+        return distancias[num_puntos - 1];
+    }
+
+    for (int i = 0; i < num_puntos - 1; i++) {
+        if (adc_recibido <= adc_tabla[i] && adc_recibido >= adc_tabla[i + 1]) {
+            float x0 = adc_tabla[i];
+            float x1 = adc_tabla[i + 1];
+            float y0 = distancias[i];
+            float y1 = distancias[i + 1];
+
+            float m = (y1 - y0) / (x1 - x0);
+            float b = y0 - m * x0;
+            return m * adc_recibido + b;
+        }
+    }
+
+    return distancias[num_puntos - 1];
 }
-
-
 
 void calculo_mm() {
-
-    adcMM[0] = (uint16_t)((-62.045 * adcVoltaje[0]) + 200);
-
-    adcMM[1] = (uint16_t)((-14.32 * adcVoltaje[1]) + 46);
-
-    adcMM[2] = (uint16_t)((-73.07 * adcVoltaje[2]) + 234);
-
-    adcMM[3] = (uint16_t)((-52.79 * adcVoltaje[3]) + 140);
-
+    adcMM[0] = (uint16_t)interpolar_distancia((uint16_t)adc_avg[0], adc_sensor1, distancias_mm, num_puntos);
+    adcMM[1] = (uint16_t)interpolar_distancia((uint16_t)adc_avg[1], adc_sensor2, distancias_mm, num_puntos);
+    adcMM[2] = (uint16_t)interpolar_distancia((uint16_t)adc_avg[2], adc_sensor3, distancias_mm, num_puntos);
+    adcMM[3] = (uint16_t)interpolar_distancia((uint16_t)adc_avg[3], adc_sensor4, distancias_mm, num_puntos);
 }
-
 
 
 /* USER CODE END 0 */
@@ -509,11 +563,7 @@ int main(void)
 
   HAL_ADC_Start_DMA(&hadc1, adcValue, 5);
 
-  for (int i = 0; i < 5; i++) {
-      for (int j = 0; j < VOLTAGE_AVG_LENGTH; j++) {
-          voltage_buffer[i][j] = 0.0;
-      }
-  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -532,8 +582,13 @@ int main(void)
 
 
 	  calibracion();
-	  calculo_adc();
+	  promedio_adc();
 	  calculo_mm();
+
+	  /*datos_enviar(rpm_f, contador, tiempo, velocidad_mm_s, velocidad_rad_s,
+	                   (uint16_t)adc_avg[0], (uint16_t)adc_avg[1], (uint16_t)adc_avg[2], (uint16_t)adc_avg[3],
+	                   adcVoltaje[0], adcVoltaje[1], adcVoltaje[2], adcVoltaje[3],
+	                   adcMM[0], adcMM[1], adcMM[2], adcMM[3]);*/
 
 	  datos_enviar(rpm_f, contador, tiempo, velocidad_mm_s, velocidad_rad_s,
 	                   adcValue[0], adcValue[1], adcValue[2], adcValue[3],
@@ -981,6 +1036,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
+	//promedio_adc();
 	HAL_ADC_Start_DMA(&hadc1, adcValue, 5);
 }
 /* USER CODE END 4 */
